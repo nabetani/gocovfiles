@@ -23,7 +23,7 @@ type options struct {
 
 var errHeadLine = errors.New("head line")
 
-const configPath = "gcovfiles.json"
+const configPath = "gocovfiles.json"
 
 func optionsFromJSON(jsonpath string) (*options, error) {
 	jsonBytes, err := func() ([]byte, error) {
