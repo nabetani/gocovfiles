@@ -2,18 +2,56 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
+	"errors"
 	"flag"
+	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 )
 
 type options struct {
-	src  string
-	root string
+	Src     string   `json:"src"`
+	Root    string   `json:"root"`
+	Ignores []string `json:"ignores"`
+}
+
+var errHeadLine = errors.New("head line")
+
+const configPath = "gcovfiles.json"
+
+func optionsFromJSON(jsonpath string) (*options, error) {
+	jsonBytes, err := func() ([]byte, error) {
+		file, err := os.Open(jsonpath)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		fi, err := file.Stat()
+		if err != nil {
+			return nil, err
+		}
+		buffer := make([]byte, fi.Size())
+		_, err = file.Read(buffer)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		return buffer, nil
+	}()
+	if err != nil {
+		return nil, err
+	}
+	o := options{}
+	err = json.Unmarshal(jsonBytes, &o)
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
 }
 
 func parseCommandLine(args []string, exitOnError bool) (*options, error) {
@@ -24,14 +62,17 @@ func parseCommandLine(args []string, exitOnError bool) (*options, error) {
 		return flag.ContinueOnError
 	}()
 	flagSet := flag.NewFlagSet(args[0], errorHandling)
-	o := options{}
-	flagSet.StringVar(&o.src, "src", "cover.out", "input file name")
-	flagSet.StringVar(&o.root, "root", "", "root directory of files")
-	err := flagSet.Parse(args[1:])
+	o, err := optionsFromJSON(configPath)
 	if err != nil {
 		return nil, err
 	}
-	return &o, nil
+	flagSet.StringVar(&o.Src, "src", o.Src, "input file name")
+	flagSet.StringVar(&o.Root, "root", o.Root, "root directory of files")
+	err = flagSet.Parse(args[1:])
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 type covItem struct {
@@ -47,9 +88,9 @@ type covInfo struct {
 func convItemFromLine(line string, reg *regexp.Regexp, opts *options) (*covItem, error) {
 	m := reg.FindStringSubmatch(line)
 	if len(m) < 1 {
-		return &covItem{}, nil
+		return nil, errHeadLine
 	}
-	fn, err := filepath.Rel(opts.root, m[1])
+	fn, err := filepath.Rel(opts.Root, m[1])
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +109,15 @@ func convItemFromLine(line string, reg *regexp.Regexp, opts *options) (*covItem,
 	}, nil
 }
 
+func stringArrayContains(a []string, s string) bool {
+	for _, i := range a {
+		if i == s {
+			return true
+		}
+	}
+	return false
+}
+
 func covInfoFromReader(src io.Reader, opts *options) (*covInfo, error) {
 	scanner := bufio.NewScanner(src)
 	//github.com/nabetani/gocovfiles/samplesrc/hoge.go:15.18,17.2 1 1
@@ -75,8 +125,14 @@ func covInfoFromReader(src io.Reader, opts *options) (*covInfo, error) {
 	c := covInfo{}
 	for scanner.Scan() {
 		item, err := convItemFromLine(scanner.Text(), reg, opts)
+		if err == errHeadLine {
+			continue
+		}
 		if err != nil {
 			return nil, err
+		}
+		if stringArrayContains(opts.Ignores, item.fn) {
+			continue
 		}
 		c.items = append(c.items, *item)
 	}
@@ -90,7 +146,7 @@ func covInfoFromReader(src io.Reader, opts *options) (*covInfo, error) {
 }
 
 func covInfoFromFilename(opts *options) (*covInfo, error) {
-	file, err := os.Open(opts.src)
+	file, err := os.Open(opts.Src)
 	if err != nil {
 		return nil, err
 	}
@@ -103,22 +159,56 @@ type sumItem struct {
 	notCovered int
 }
 
-type fileSumItem struct {
-	sumItem
-	fn string
+func (s *sumItem) percent() float64 {
+	total := s.covered + s.notCovered
+	if total == 0 {
+		return 0
+	}
+	return float64(s.covered) * 100 / float64(total)
 }
 
 type summary struct {
-	sumItems []fileSumItem
+	sumItems map[string]*sumItem
 	total    sumItem
 }
 
+func (s *summary) toString() string {
+	fns := []string{}
+	fncol := "filename"
+	maxlen := len(fncol)
+	for fn := range s.sumItems {
+		fns = append(fns, fn)
+		if lenFn := len(fn); maxlen < lenFn {
+			maxlen = lenFn
+		}
+	}
+	sort.Strings(fns)
+	b := strings.Builder{}
+	b.WriteString(fmt.Sprintf("%*s  covered  not covered   ratio\n", maxlen, fncol))
+	horzLine := strings.Repeat("-", maxlen) + "  -------  -----------  ------\n"
+	b.WriteString(horzLine)
+	format := "%*s  %7d  %11d  %5.1f%%\n"
+	for _, fn := range fns {
+		i := s.sumItems[fn]
+		b.WriteString(fmt.Sprintf(format, maxlen, fn, i.covered, i.notCovered, i.percent()))
+	}
+	b.WriteString(horzLine)
+	b.WriteString(fmt.Sprintf(format, maxlen, "total", s.total.covered, s.total.notCovered, s.total.percent()))
+	return b.String()
+}
+
 func summarize(c *covInfo, opts *options) (*summary, error) {
-	files := map[string]bool{}
-	s := summary{}
+	s := summary{sumItems: map[string]*sumItem{}}
 	for _, ci := range c.items {
-		if !files[ci.fn] {
-			s.sumItems = append(s.sumItems, fileSumItem{fn: ci.fn})
+		if _, ok := s.sumItems[ci.fn]; !ok {
+			s.sumItems[ci.fn] = &sumItem{}
+		}
+		if ci.covered {
+			s.sumItems[ci.fn].covered += ci.sentences
+			s.total.covered += ci.sentences
+		} else {
+			s.sumItems[ci.fn].notCovered += ci.sentences
+			s.total.notCovered += ci.sentences
 		}
 	}
 	return &s, nil
@@ -140,5 +230,5 @@ func main() {
 		os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(1)
 	}
-	log.Println(sum)
+	fmt.Println(sum.toString())
 }
