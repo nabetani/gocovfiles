@@ -15,6 +15,14 @@ import (
 	"strings"
 )
 
+var (
+	// Version application versoin
+	Version string
+
+	// Revision application revision
+	Revision string
+)
+
 type options struct {
 	Src     string   `json:"src"`
 	Root    string   `json:"root"`
@@ -64,8 +72,14 @@ func getOptions(args []string, exitOnError bool) (*options, error) {
 	flagSet := flag.NewFlagSet(args[0], errorHandling)
 	configPath := defaultConfigPath
 	flagSet.StringVar(&configPath, "c", defaultConfigPath, "config JSON path")
+	var version bool
+	flagSet.BoolVar(&version, "v", false, "show version")
 	if err := flagSet.Parse(args[1:]); err != nil {
 		return nil, err
+	}
+	if version {
+		fmt.Printf("version %v / revision %v\n", Version, Revision)
+		os.Exit(0)
 	}
 	o, err := optionsFromJSON(configPath)
 	if err != nil {
