@@ -2,6 +2,7 @@
   "src": "cover.out",
   "root": "github.com/nabetani/gocovfiles/samplesrc/",
   "ignores": [
-    "fuga.go"
+    "hogefuga/fuga.go",
+    "foobar/bar.go"
   ]
 }
