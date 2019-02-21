@@ -1,0 +1,6 @@
+{
+  "src": "cover.out",
+  "root": "github.com/nabetani/gocovfiles/samplesrc/",
+  "ignores": [
+  ]
+}
