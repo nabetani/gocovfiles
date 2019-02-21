@@ -23,7 +23,7 @@ type options struct {
 
 var errHeadLine = errors.New("head line")
 
-const configPath = "gocovfiles.json"
+const defaultConfigPath = "gocovfiles.json"
 
 func optionsFromJSON(jsonpath string) (*options, error) {
 	jsonBytes, err := func() ([]byte, error) {
@@ -54,7 +54,7 @@ func optionsFromJSON(jsonpath string) (*options, error) {
 	return &o, nil
 }
 
-func parseCommandLine(args []string, exitOnError bool) (*options, error) {
+func getOptions(args []string, exitOnError bool) (*options, error) {
 	errorHandling := func() flag.ErrorHandling {
 		if exitOnError {
 			return flag.ExitOnError
@@ -62,13 +62,12 @@ func parseCommandLine(args []string, exitOnError bool) (*options, error) {
 		return flag.ContinueOnError
 	}()
 	flagSet := flag.NewFlagSet(args[0], errorHandling)
-	o, err := optionsFromJSON(configPath)
-	if err != nil {
+	configPath := defaultConfigPath
+	flagSet.StringVar(&configPath, "c", defaultConfigPath, "config JSON path")
+	if err := flagSet.Parse(args[1:]); err != nil {
 		return nil, err
 	}
-	flagSet.StringVar(&o.Src, "src", o.Src, "input file name")
-	flagSet.StringVar(&o.Root, "root", o.Root, "root directory of files")
-	err = flagSet.Parse(args[1:])
+	o, err := optionsFromJSON(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +214,7 @@ func summarize(c *covInfo, opts *options) (*summary, error) {
 }
 
 func main() {
-	opts, err := parseCommandLine(os.Args, true)
+	opts, err := getOptions(os.Args, true)
 	if err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(1)
