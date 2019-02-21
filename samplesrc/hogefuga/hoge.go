@@ -1,4 +1,4 @@
-package samplesrc
+package hogefuga
 
 import (
 	"fmt"
