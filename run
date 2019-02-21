@@ -1,3 +1,0 @@
- go test ./samplesrc -cover -coverprofile=cover.out
- go build *.go && ./main -root github.com/nabetani/gocovfiles/samplesrc/
- 
